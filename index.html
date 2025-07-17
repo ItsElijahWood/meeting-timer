@@ -1,0 +1,416 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Meeting Timer</title>
+    <link rel="icon" type="img/png" href="favicon.png">
+    <style>
+        :root {
+            --primary: #2c3e50;
+            --accent: #3498db;
+            --light: #ecf0f1;
+            --text: #333;
+            --radius: 8px;
+        }
+
+        body {
+            font-family: 'Lucida Sans Unicode';
+            font-size: 14px;
+            margin: 0;
+            background: var(--primary);
+            color: var(--text);
+            padding: 1rem;
+        }
+
+        h1 {
+            color: var(--light);
+            text-align: center;
+            margin-bottom: 0.5em;
+        }
+
+        h2 {
+            text-align: center;
+            color: var(--light);
+            padding: 0.5em;
+            border-radius: 0.5em;
+        }
+
+        .section {
+            background: white;
+            border-radius: var(--radius);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            margin-top: 1em;
+            margin-bottom: 1em;
+            padding: 1em;
+        }
+
+        .section_stopwatch {
+            position: sticky;
+            background: white;
+            border-radius: var(--radius);
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            top: 0;
+            padding-bottom: 1rem;
+            border: 2px solid #c1bfbf;
+            text-align: center;
+        }
+
+        #entries {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+            margin-top: 20px;
+        }
+
+        .timer-display {
+            font-size: 5em;
+            font-family: monospace;
+            text-align: center;
+        }
+
+        .btn-group {
+            text-align: center;
+        }
+
+        button {
+            padding: 0.5em 1.2em;
+            margin: 0.3em;
+            border: none;
+            border-radius: var(--radius);
+            background: var(--accent);
+            color: white;
+            font-size: 1em;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #2980b9;
+        }
+
+        .stopwatch-btn {
+            all: unset;
+            background-color: transparent;
+            font-size: 48px;
+            text-align: center;
+            padding-inline: 0.5rem;
+            border: none;
+        } 
+
+        input[type="numeric"] {
+            font-size: 14px;
+            width: 95%;
+            padding: 0.6em;
+            margin-top: 0.5em;
+            border: 1px solid #ccc;
+            border-radius: var(--radius);
+        }
+
+        label {
+            font-weight: bold;
+            display: block;
+            margin-bottom: 0.3em;
+        }
+
+        .share-buttons {
+            display: flex;
+            flex-direction: column;
+            gap: 0.5em;
+            margin-top: 1em;
+        }
+
+        .share-buttons button {
+            background: var(--primary);
+        }
+
+        @media screen and (min-width: 500px) {
+            .share-buttons {
+                flex-direction: row;
+                justify-content: center;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>🕖 Meeting Timer 🕔</h1>
+
+    <div class="section_stopwatch">
+        <div class="timer-display" id="display">00:00</div>
+        <div class="btn-group">
+            <button class="stopwatch-btn" onclick="startTimer()">▶️</button>
+            <button class="stopwatch-btn" onclick="pauseTimer()">⏸️</button>
+            <button class="stopwatch-btn" onclick="resetTimer()">⏮️</button>
+            <button class="stopwatch-btn" onclick="pasteCurrentTime()">⏬</button>
+        </div>
+    </div>
+
+    <div id="entries" class="section">
+    </div>
+
+    <div class="section btn-group">
+        <button onclick="clearEntries()">Clear All Entries</button>
+    </div>
+
+    <div class="section share-buttons">
+        <button onclick="emailTimings()">✉️ Email Timings</button>
+        <button onclick="whatsappTimings()">💬 WhatsApp Timings</button>
+    </div>
+
+    <script>
+        const meetingParts1 = [
+            "Opening Comments (1 min)", "Talk (10 mins)", "Spiritual Gems (10 mins)", "Bible Reading (4 mins)", "Bible Reading Counsel (1 min)"
+        ];
+
+        const meetingParts2 = [
+            "Assignment 1", "Assignment 1 Counsel (1 min)", "Assignment 2", "Assignment 2 Counsel (1 min)",
+            "Assignment 3", "Assignment 3 Counsel (1 min)", "Assignment 4", "Assignment 4 Counsel (1 min)"
+        ];
+
+        const meetingParts3 = [
+            "Item 1", "Item 2", "Item 3",
+            "Congregation Bible Study (30 mins)", "Concluding Comments (3 mins)"
+        ];
+
+        const stopwatchDisplay = document.getElementById('display');
+        let serviceWorkerRegistration;
+        let currentTimerValue = 0; // To store the latest value received from SW
+
+        // Function to format time for display (same as before)
+        function formatTime(s) {
+            const mins = Math.floor(s / 60).toString().padStart(2, '0');
+            const secs = (s % 60).toString().padStart(2, '0');
+            return `${mins}:${secs}`;
+        }
+
+        // --- Service Worker Registration and Communication ---
+        if ('serviceWorker' in navigator) {
+            navigator.serviceWorker.register('/meeting-timer-sw.js', { scope: '/' })
+                .then(registration => {
+                    serviceWorkerRegistration = registration;
+                    console.log('Service Worker Registered!', registration);
+
+                    // Listen for messages from the Service Worker
+                    navigator.serviceWorker.addEventListener('message', event => {
+                        if (event.data.type === 'STOPWATCH_UPDATE') {
+                            currentTimerValue = event.data.elapsedSeconds;
+                            stopwatchDisplay.textContent = formatTime(currentTimerValue);
+                        } else if (event.data.type === 'STOPWATCH_INITIAL_STATE') {
+                            currentTimerValue = event.data.elapsedSeconds;
+                            stopwatchDisplay.textContent = formatTime(currentTimerValue);
+                            // You might want to update button states based on event.data.isRunning here
+                        }
+                    });
+
+                    // Request initial state from SW when page loads (or regains focus)
+                    // This ensures the displayed time is correct even if SW was running in background
+                    if (serviceWorkerRegistration.active) {
+                        serviceWorkerRegistration.active.postMessage({ type: 'REQUEST_INITIAL_STATE' });
+                    }
+
+                })
+                .catch(error => {
+                    console.error('Service Worker Registration Failed:', error);
+                });
+        }
+
+        // Function to send messages to the Service Worker
+        function sendMessageToSW(type, payload = {}) {
+            if (serviceWorkerRegistration && serviceWorkerRegistration.active) {
+                serviceWorkerRegistration.active.postMessage({ type, ...payload });
+            } else {
+                console.warn('Service Worker not active or registered, cannot send message:', type);
+            }
+        }
+
+        // --- UI functions that now send messages to SW ---
+        function startTimer() {
+            sendMessageToSW('START_STOPWATCH');
+        }
+
+        function pauseTimer() {
+            sendMessageToSW('PAUSE_STOPWATCH');
+        }
+
+        function resetTimer() {
+            sendMessageToSW('RESET_STOPWATCH');
+            currentTimerValue = 0; // Immediately update local value for quick UI response
+            stopwatchDisplay.textContent = '00:00';
+        }
+
+        function saveToLocalStorage(part, time) {
+            const data = JSON.parse(localStorage.getItem('meetingTimes')) || {};
+            data[part] = time;
+            localStorage.setItem('meetingTimes', JSON.stringify(data));
+        }
+
+        function loadEntries() {
+            const entriesDiv = document.getElementById('entries');
+            entriesDiv.innerHTML = '';
+            const data = JSON.parse(localStorage.getItem('meetingTimes')) || {};
+
+            meetingParts1.forEach(part => {
+                if (part === "Opening Comments (1 min)") {
+                    const title = document.createElement("h2");
+                    title.innerHTML = "Treasures from God's Word";
+                    title.style.backgroundColor = "#408e6e"
+
+                    document.getElementById("entries").appendChild(title);
+                }
+
+                const container = document.createElement('div');
+                const label = document.createElement('label');
+                label.textContent = part;
+
+                const input = document.createElement('input');
+                input.type = "numeric";
+                input.inputMode = "numeric";
+                input.pattern = "\d{2}:\d{2}";
+                input.placeholder = "mm:ss";
+                input.maxlength = "5";
+                input.value = data[part] || '';
+                input.addEventListener('input', handleMaskedInput);
+
+                input.oninput = () => saveToLocalStorage(part, input.value);
+
+                container.appendChild(label);
+                container.appendChild(input);
+                entriesDiv.appendChild(container);
+            });
+
+            meetingParts2.forEach(part => {
+                if (part === "Assignment 1") {
+                    const title = document.createElement("h2");
+                    title.innerHTML = "Apply Yourself To The Ministry";
+                    title.style.backgroundColor = "#d5ad24"
+
+                    document.getElementById("entries").appendChild(title);
+                }
+                const container = document.createElement('div');
+                const label = document.createElement('label');
+                label.textContent = part;
+
+                const input = document.createElement('input');
+                input.type = "numeric";
+                input.inputMode = "numeric";
+                input.pattern = "\d{2}:\d{2}";
+                input.placeholder = "mm:ss";
+                input.maxlength = "5";
+                input.value = data[part] || '';
+                input.addEventListener('input', handleMaskedInput);
+
+                input.oninput = () => saveToLocalStorage(part, input.value);
+
+                container.appendChild(label);
+                container.appendChild(input);
+                entriesDiv.appendChild(container);
+            });
+
+            meetingParts3.forEach(part => {
+                if (part === "Item 1") {
+                    const title = document.createElement("h2");
+                    title.style.backgroundColor = "#cb3b07"
+
+                    title.innerHTML = "Living As Christians";
+                    document.getElementById("entries").appendChild(title);
+                }
+                const container = document.createElement('div');
+                const label = document.createElement('label');
+                label.textContent = part;
+
+                const input = document.createElement('input');
+                input.type = "numeric";
+                input.inputMode = "numeric";
+                input.pattern = "\d{2}:\d{2}";
+                input.placeholder = "mm:ss";
+                input.maxlength = "5";
+                input.value = data[part] || '';
+                input.addEventListener('input', handleMaskedInput);
+
+                input.oninput = () => saveToLocalStorage(part, input.value);
+
+                container.appendChild(label);
+                container.appendChild(input);
+                entriesDiv.appendChild(container);
+            });
+        }
+
+        function clearEntries() {
+            if (confirm("Clear all timings?")) {
+                localStorage.removeItem('meetingTimes');
+                loadEntries();
+            }
+        }
+
+        function compileTimings() {
+            const data = JSON.parse(localStorage.getItem('meetingTimes')) || {};
+            let message = "*Meeting Timings:*\n\n";
+            meetingParts1.forEach(part => {
+                const time = data[part] || "—";
+                message += `*${part}:* ${time}\n\n`;
+            });
+            meetingParts2.forEach(part => {
+                const time = data[part] || "—";
+                message += `*${part}:* ${time}\n\n`;
+            });
+            meetingParts3.forEach(part => {
+                const time = data[part] || "—";
+                message += `*${part}:* ${time}\n\n`;
+            });
+
+            return message;
+        }
+
+        function emailTimings() {
+            const subject = "Meeting Timings";
+            const body = encodeURIComponent(compileTimings());
+            window.location.href = `mailto:?subject=${subject}&body=${body}`;
+        }
+
+        function whatsappTimings() {
+            const message = encodeURIComponent(compileTimings());
+            window.open(`https://wa.me/?text=${message}`, '_blank');
+        }
+
+        function handleMaskedInput(e) {
+            const input = e.target;
+            let raw = input.value.replace(/\D/g, '').slice(0, 4); // Only digits, max 4
+            let formatted = '';
+            if (raw.length >= 3) {
+                // 3–4 digits: split into mm:ss
+                formatted = raw.slice(0, raw.length - 2) + ':' + raw.slice(-2);
+            } else if (raw.length === 2) {
+                // Exactly 2 digits: assume seconds, prepend colon
+                formatted = raw + ':';
+            } else {
+                formatted = raw;
+            }
+            input.value = formatted;
+            // Move caret to end
+            input.setSelectionRange(input.value.length, input.value.length);
+
+            const partLabel = input.previousSibling.textContent || '';
+            saveToLocalStorage(partLabel, formatted);
+        }
+
+        let activeInput = null;
+
+        document.addEventListener('focusin', (e) => {
+            if (e.target.tagName === 'INPUT' && e.target.type === 'numeric') { // Changed type to numeric
+                activeInput = e.target;
+            }
+        });
+
+        function pasteCurrentTime() {
+            if (!activeInput) return;
+
+            // Use the currentTimerValue received from the Service Worker
+            const current = formatTime(currentTimerValue);
+            activeInput.value = current;
+            const partLabel = activeInput.previousSibling.textContent || '';
+            saveToLocalStorage(partLabel, current);
+        }
+
+        loadEntries();
+    </script>
+</body>
+</html>
